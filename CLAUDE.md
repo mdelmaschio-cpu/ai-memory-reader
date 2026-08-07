@@ -140,7 +140,7 @@ The app is a two-target SwiftUI project (macOS 15.0+ and iOS 17.0+) sharing the 
 **Settings:** `SettingsStore` writes to both `NSUbiquitousKeyValueStore` (iCloud, primary) and `UserDefaults` (fallback). Settings sync across devices. Security-scoped bookmark data is never written to iCloud.
 
 **Dual distribution:**
-- **Debug builds** (daily Xcode runs): no entitlements, no sandbox, no permission prompts — mirrors the GitHub release zip.
+- **Debug builds** (daily Xcode runs): no entitlements, no sandbox, no permission prompts.
 - **Release / Mac App Store builds**: full App Sandbox with `AIMemoryReader.entitlements`; requires `BookmarkStore` for home folder access.
 
 **URL scheme / CLI integration:** The `aimemoryreader://open?path=...&heading=...` URL scheme is the programmatic API for AI agents. The `aimr` bash script wraps this scheme. Path traversal (`..`) is rejected in `AppState.handleURL`.
@@ -156,7 +156,7 @@ The app is a two-target SwiftUI project (macOS 15.0+ and iOS 17.0+) sharing the 
 | `AIMemoryReader/Sources/Utilities/MemoryFileMatcher.swift` | Allow-list of known AI memory filenames for strict filter mode. Update `knownFilenames` when adding new AI tool support. |
 | `AIMemoryReader/Sources/Models/SettingsStore.swift` | iCloud-first settings persistence. Keys defined in private `Key` enum. Bookmark data excluded from iCloud. |
 | `AIMemoryReader/Sources/Utilities/BookmarkStore.swift` | Security-scoped bookmarks for MAS sandbox builds. Check `BookmarkStore.isSandboxed` to guard sandbox-specific code paths. |
-| `AIMemoryReader/Sources/Utilities/UpdateChecker.swift` | Polls GitHub `/releases/latest` on launch; skipped in MAS builds via `guard !BookmarkStore.isSandboxed`. Semver comparison with strict integer components. |
+| `AIMemoryReader/Sources/Utilities/UpdateChecker.swift` | Polls GitHub `/releases/latest` on launch; skipped in MAS builds via `guard !BookmarkStore.isSandboxed`. |
 | `AIMemoryReader/Sources/Utilities/FileWatcher.swift` | FSEvents C API wrapper. macOS only. |
 | `AIMemoryReader/Sources/Views/MarkdownEditorView.swift` | NSTextView-based edit mode with syntax highlighting and auto-save. macOS only. |
 | `aimr` | Standalone bash CLI — no compilation. Encodes path/heading and calls `open` with the URL scheme. |
@@ -187,18 +187,7 @@ Use `#if os(macOS)` / `#if os(iOS)` to gate platform-specific code. macOS-only f
 - `project.yml` is the sole source of truth for the Xcode project configuration.
 - Never hand-edit `AIMemoryReader.xcodeproj/project.pbxproj`.
 - Run `xcodegen generate` after every `project.yml` change.
-- New `.swift` files placed anywhere under `AIMemoryReader/Sources/` are auto-included by XcodeGen's directory-based source rule — no `project.yml` change needed just to add a Swift file.
-
-### File Filtering
-
-- `MemoryFileMatcher.isLikelyMemory(_:)` controls strict filter mode: `.md`, `.mdc`, `.jsonl`, `.ndjson` always pass; `.json`/`.yaml`/`.yml` only pass if the filename is in `knownFilenames`.
-- `FileNode.supportedExtensions` is the extension allow-list used by `AISource.containsSupportedFiles`.
-
-### Settings
-
-- `SettingsStore` writes to both iCloud and `UserDefaults` on every set. iCloud is checked first on get.
-- Security-scoped bookmark data must never be written to `SettingsStore` (device-specific opaque tokens that are meaningless on other devices).
-- Add new settings keys to the private `Key` enum inside `SettingsStore`.
+- New `.swift` files placed anywhere under `AIMemoryReader/Sources/` are auto-included by XcodeGen's directory-based source rule.
 
 ### Version Bumping
 
@@ -206,55 +195,37 @@ Bump `MARKETING_VERSION` and `CURRENT_PROJECT_VERSION` in `project.yml` under bo
 
 ## How AI Assistants Should Work in This Repo
 
-**No tests, no CI.** Build in Xcode (`⌘B`) and run (`⌘R`) to verify changes. There is no `swift test`, no `make test`, no automated validation pipeline.
+**No tests, no CI.** Build in Xcode (`⌘B`) and run (`⌘R`) to verify changes.
 
-**Never edit the generated Xcode project.** Edit `project.yml`, then run `xcodegen generate`. Edits to `project.pbxproj` will be overwritten on the next generation.
+**Never edit the generated Xcode project.** Edit `project.yml`, then run `xcodegen generate`.
 
 **Adding a new AI tool** requires changes in two places:
-1. Add an `AISource` entry to `AISource.allSources` in `AISource.swift` — include `id`, `name`, `path` (relative to `~`), `iconName`, and `color`.
-2. Add any tool-specific config filenames to `MemoryFileMatcher.knownFilenames`.
-3. Update `README.md` and `llms.txt` to document the new tool.
+1. Add an `AISource` entry to `AISource.allSources` in `AISource.swift`
+2. Add any tool-specific config filenames to `MemoryFileMatcher.knownFilenames`
+3. Update `README.md` and `llms.txt`
 
-**Two builds, one codebase.** Debug = unsandboxed (no entitlements file). Release = sandboxed (MAS entitlements). Always check `BookmarkStore.isSandboxed` before using sandbox-specific paths or APIs.
+**Two builds, one codebase.** Debug = unsandboxed. Release = sandboxed (MAS entitlements). Always check `BookmarkStore.isSandboxed` before using sandbox-specific paths.
 
-**The `SettingsStore` is iCloud-first.** Custom source paths and last-selected source sync across devices. Do not route ephemeral or device-specific data (such as security-scoped bookmark blobs) through `SettingsStore`.
-
-**FSEvents is macOS-only.** All file-watching code is inside `#if os(macOS)` guards in `AppState`. iOS has no equivalent — do not add iOS file watching without testing on device.
+**FSEvents is macOS-only.** All file-watching code is inside `#if os(macOS)` guards.
 
 **Edit mode is macOS-only.** `MarkdownEditorView` wraps `NSTextView`. Do not expose edit-mode features on iOS.
 
-**PDF export is macOS-only.** `PDFExporter` uses `WKWebView` to render markdown as HTML, then prints to PDF.
+**The URL scheme is the programmatic API.** `aimemoryreader://open?path=...&heading=...`. Path traversal (`..`) is rejected in `AppState.handleURL`.
 
-**The URL scheme is the programmatic API.** `aimemoryreader://open?path=...&heading=...` is how AI agents open files. The path is URL-encoded; path traversal (`..`) is rejected in `AppState.handleURL`. The `aimr` CLI wraps this for shell use.
+**`CLAUDE_CLOUD_MEMORY_SPEC.md`** documents a planned but unimplemented feature. Do not implement it without explicit instruction.
 
-**The `aimr` CLI is a bash script** — no compilation or build step needed. It encodes the path and heading with Python's `urllib.parse.quote`, then calls `open` with the URL scheme.
-
-**Development log files** (`PLAN.md`, `V2-PLAN.md`, `V3-PLAN.md`) are historical records, partly in Chinese. They document past decisions. Do not treat them as specs to implement unless actively directed to do so.
-
-**`CLAUDE_CLOUD_MEMORY_SPEC.md`** documents a planned but unimplemented feature for syncing claude.ai cloud memory via session cookies. Do not implement it without explicit instruction — the API endpoints are reverse-engineered and subject to change without notice.
-
-**`MAS_METADATA.md`** contains App Store copy. Do not change the app name or bundle ID without updating both `project.yml` and `MAS_METADATA.md` in the same change.
-
-**`llms.txt`** is a machine-readable summary for AI agents consuming the app's API. Keep it current when adding new AI source support or new CLI / URL scheme features.
-
-**Swift strict concurrency violations will fail the build.** All new types that touch UI must be `@MainActor`. All new async work crossing actor boundaries must use `Sendable` types or be explicitly audited.
+**Swift strict concurrency violations will fail the build.** All new types that touch UI must be `@MainActor`.
 
 ## SPM Dependencies
-
-Declared in `project.yml` under the `packages` section and resolved by Xcode's Swift Package Manager integration:
 
 | Package | Version | Use |
 |---------|---------|-----|
 | `gonzalezreal/swift-markdown-ui` | 2.4.0+ | Markdown rendering with GitHub-style theme |
 | `JohnSundell/Splash` | 0.16.0+ | Code block syntax highlighting |
 
-Do not add dependencies that require a separate package manager (npm, pip, etc.). All dependencies must be SPM packages declared in `project.yml`.
-
 ## Entitlements and Distribution
 
 | Build Configuration | Entitlements | Sandbox | Bookmark Access |
-|---------------------|-------------|---------|---------------|
-| Debug | none (empty string in project.yml) | No | Direct filesystem access |
+|---------------------|-------------|---------|------------------|
+| Debug | none | No | Direct filesystem access |
 | Release / MAS | `AIMemoryReader.entitlements` | Yes | Requires `BookmarkStore` |
-
-The `UpdateChecker` polls GitHub releases on every launch and is silently skipped in sandboxed builds (`guard !BookmarkStore.isSandboxed` at the top of the check).
